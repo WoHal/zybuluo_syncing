@@ -15,7 +15,24 @@
     'use strict';
     const {com, JSZip} = unsafeWindow
     const btoa = com.zybuluo.common.encodeBase64
+    const saveAs = com.zybuluo.mdeditor.common.saveAs
     const {octokit: {Octokit}} = window
+
+    Date.prototype.format = function (fmt) {
+        var o = {
+            "M+": this.getMonth() + 1, //月份
+            "d+": this.getDate(), //日
+            "h+": this.getHours(), //小时
+            "m+": this.getMinutes(), //分
+            "s+": this.getSeconds(), //秒
+            "q+": Math.floor((this.getMonth() + 3) / 3), //季度
+            "S": this.getMilliseconds() //毫秒
+        };
+        if (/(y+)/.test(fmt)) fmt = fmt.replace(RegExp.$1, (this.getFullYear() + "").substr(4 - RegExp.$1.length));
+        for (var k in o)
+        if (new RegExp("(" + k + ")").test(fmt)) fmt = fmt.replace(RegExp.$1, (RegExp.$1.length == 1) ? (o[k]) : (("00" + o[k]).substr(("" + o[k]).length)));
+        return fmt;
+    }
 
     function getCurrentNoteTitle() {
         return document.title.split('-').slice(0, -1).join('').trim()
@@ -112,9 +129,16 @@
         }
     }
 
+    function getUserInfo() {
+        return new Promise((resolve, reject) => {
+            com.zybuluo.common.loginUser.get(userInfo => {
+                resolve(userInfo)
+            })
+        })
+    }
 
-    function download(userInfo) {
-        var jszip = new JSZip;
+    function getAllLocalNotesZip(userInfo) {
+        const jszip = new JSZip;
         return new Promise((resolve, reject) => {
             com.zybuluo.mdeditor.syncUserNotes.exportAllLocalNotes(userInfo, function(a) {
                 for (var b in a.tags) {
@@ -122,28 +146,20 @@
                     c.file(a.title + ".md", a.details)
                 }
             }, function() {
-                var a = jszip.generate({
+                const zip = jszip.generate({
                     type: "blob"
                 });
-                q(a, "Cmd-Markdowns-" + (new Date).format("Y-m-d-H:i") + ".zip")
-                resolve()
+                resolve(zip)
             }, function() {
                 reject("导出本地文稿时出错，请关闭客户端/浏览器后重启程序，或者联系我们。")
             })
         })
     }
 
-    function downloadAllMarkdowns() {
-        return new Promise((resolve, reject) => {
-            com.zybuluo.common.loginUser.get(async userInfo => {
-                try {
-                    await download(userInfo)
-                    resolve()
-                } catch (error) {
-                    reject(error)
-                }
-            });
-        })
+    async function downloadAllMarkdowns() {
+        const userInfo = await getUserInfo()
+        const zip = await getAllLocalNotesZip(userInfo)
+        saveAs(zip, "Cmd-Markdowns-" + (new Date).format("yyyy-MM-dd-hh:mm") + ".zip")
     }
 
     function createUIs() {
