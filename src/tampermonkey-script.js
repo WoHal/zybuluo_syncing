@@ -4,68 +4,28 @@
 // @version      0.1
 // @description  try to take over the world!
 // @author       You
-// @require      https://unpkg.com/ajax-hook@2.1.3/dist/ajaxhook.min.js
-// @require      https://unpkg.com/qs@6.14.0/dist/qs.js
-// @require      https://cdnjs.cloudflare.com/ajax/libs/jsdiff/8.0.2/diff.min.js
 // @require      https://fastly.jsdelivr.net/gh/WoHal/zybuluo_syncing@0.0.1/libs/octokit.js
 // @match        https://www.zybuluo.com/*
 // @icon         https://www.zybuluo.com/static/img/favicon.png
-// @grant        none
+// @grant        GM_setValue
+// @grant        GM_getValue
 // ==/UserScript==
 
 (function() {
     'use strict';
-    const {com, JSZip, ah, Qs, octokit} = window
-    const {Octokit} = octokit
+    const {com, JSZip} = unsafeWindow
     const btoa = com.zybuluo.common.encodeBase64
-    
-    function GM_setValue(key, value) {
-        localStorage.setItem(key, value)
+    const {octokit: {Octokit}} = window
+
+    function getCurrentNoteTitle() {
+        return document.title.split('-').slice(0, -1).join('').trim()
     }
-    function GM_getValue(key, defaultValue) {
-        return localStorage.getItem(key) || defaultValue
+    function getCurrentNoteContent() {
+        return com.zybuluo.mdeditor.unifiedEditor.getValue()
     }
-
-    // 节流函数：在指定时间内只执行最后一次调用
-    function throttle(func, delay) {
-        let timer = null;
-        let lastArgs = null;
-
-        return function(...args) {
-            lastArgs = args;
-
-            if (!timer) {
-                timer = setTimeout(() => {
-                    func.apply(this, lastArgs);
-                    timer = null;
-                    lastArgs = null;
-                }, delay);
-            }
-        };
-    }
-
-    // 使用节流包装syncToGithub函数，2秒内只执行最后一次
-    const throttledSyncToGithub = throttle(syncToGithub, 2000);
-
-    function autoSync() {
-        ah.proxy({
-            //请求发起前进入
-            onRequest: (config, handler) => {
-                const apiToken = GM_getValue('apiToken', '');
-                if (apiToken && /note\/update/i.test(config.url)) {
-                    const {title, diff_details} = Qs.parse(config.body, { depth: 5 })
-                    if (diff_details) {
-                        // 使用节流后的函数
-                        const newContent = com.zybuluo.mdeditor.unifiedEditor.getValue()
-                        throttledSyncToGithub(title, newContent);
-                    }
-                }
-                handler.next(config);
-            }
-        })
-    }
-
-    async function syncToGithub(title, newContent) {
+    async function syncToGithub() {
+        const title = getCurrentNoteTitle()
+        const newContent = getCurrentNoteContent()
         try {
             // 获取GitHub设置
             const githubRepo = GM_getValue('githubRepo', '');
@@ -152,10 +112,10 @@
         }
     }
 
-    function downloadAllMarkdowns() {
-        var q = com.zybuluo.mdeditor.common.saveAs;
-        function download(userInfo) {
-            var jszip = new JSZip;
+
+    function download(userInfo) {
+        var jszip = new JSZip;
+        return new Promise((resolve, reject) => {
             com.zybuluo.mdeditor.syncUserNotes.exportAllLocalNotes(userInfo, function(a) {
                 for (var b in a.tags) {
                     var c = jszip.folder(a.tags[b]);
@@ -166,49 +126,157 @@
                     type: "blob"
                 });
                 q(a, "Cmd-Markdowns-" + (new Date).format("Y-m-d-H:i") + ".zip")
+                resolve()
             }, function() {
-                window.alert("导出本地文稿时出错，请关闭客户端/浏览器后重启程序，或者联系我们。")
+                reject("导出本地文稿时出错，请关闭客户端/浏览器后重启程序，或者联系我们。")
             })
-        }
-        com.zybuluo.common.loginUser.get(userInfo => {
-            download(userInfo)
-        });
+        })
+    }
+
+    function downloadAllMarkdowns() {
+        return new Promise((resolve, reject) => {
+            com.zybuluo.common.loginUser.get(async userInfo => {
+                try {
+                    await download(userInfo)
+                    resolve()
+                } catch (error) {
+                    reject(error)
+                }
+            });
+        })
     }
 
     function createUIs() {
-        // 创建同步设置悬浮按钮
+        // 创建按钮组容器
+        const buttonGroup = document.createElement('div');
+        buttonGroup.style.position = 'fixed';
+        buttonGroup.style.bottom = '20%';
+        buttonGroup.style.right = '20px';
+        buttonGroup.style.display = 'flex';
+        buttonGroup.style.flexDirection = 'column';
+        buttonGroup.style.gap = '10px';
+        buttonGroup.style.zIndex = '9999';
+        document.body.appendChild(buttonGroup);
+        
+        // 创建开始同步按钮
+        const syncButton = document.createElement('div');
+        syncButton.innerHTML = '开始同步';
+        syncButton.style.padding = '10px 15px';
+        syncButton.style.backgroundColor = '#FF5722';
+        syncButton.style.color = 'white';
+        syncButton.style.borderRadius = '5px';
+        syncButton.style.cursor = 'pointer';
+        syncButton.style.boxShadow = '0 2px 5px rgba(0,0,0,0.3)';
+        syncButton.style.textAlign = 'center';
+        buttonGroup.appendChild(syncButton);
+        
+        // 创建同步设置按钮
         const floatingButton = document.createElement('div');
         floatingButton.innerHTML = '同步设置';
-        floatingButton.style.position = 'fixed';
-        floatingButton.style.bottom = '30%';
-        floatingButton.style.right = '20px';
         floatingButton.style.padding = '10px 15px';
         floatingButton.style.backgroundColor = '#4CAF50';
         floatingButton.style.color = 'white';
         floatingButton.style.borderRadius = '5px';
         floatingButton.style.cursor = 'pointer';
-        floatingButton.style.zIndex = '9999';
         floatingButton.style.boxShadow = '0 2px 5px rgba(0,0,0,0.3)';
-        document.body.appendChild(floatingButton);
+        floatingButton.style.textAlign = 'center';
+        buttonGroup.appendChild(floatingButton);
 
-        // 创建下载所有Markdown文件的悬浮按钮
+        // 创建下载所有Markdown文件的按钮
         const downloadButton = document.createElement('div');
-        downloadButton.innerHTML = '下载所有MD';
-        downloadButton.style.position = 'fixed';
-        downloadButton.style.bottom = '14%';
-        downloadButton.style.right = '20px';
+        downloadButton.innerHTML = '全部导出';
         downloadButton.style.padding = '10px 15px';
         downloadButton.style.backgroundColor = '#2196F3';
         downloadButton.style.color = 'white';
         downloadButton.style.borderRadius = '5px';
         downloadButton.style.cursor = 'pointer';
-        downloadButton.style.zIndex = '9999';
         downloadButton.style.boxShadow = '0 2px 5px rgba(0,0,0,0.3)';
-        document.body.appendChild(downloadButton);
+        downloadButton.style.textAlign = 'center';
+        buttonGroup.appendChild(downloadButton);
 
+        // 标记按钮是否处于操作中的状态
+        let isSyncing = false;
+        let isDownloading = false;
+        
+        // 点击开始同步按钮调用syncToGithub函数
+        syncButton.addEventListener('click', async () => {
+            // 如果正在同步中，则不执行操作
+            if (isSyncing) return;
+            
+            // 更改按钮状态
+            isSyncing = true;
+            const originalColor = syncButton.style.backgroundColor;
+            syncButton.style.backgroundColor = '#999999';
+            syncButton.innerHTML = '同步中...';
+            
+            try {
+                // 执行同步操作
+                await syncToGithub();
+                // 操作成功提示
+                syncButton.style.backgroundColor = '#4CAF50';
+                syncButton.innerHTML = '同步成功';
+                
+                // 2秒后恢复按钮状态
+                setTimeout(() => {
+                    syncButton.style.backgroundColor = originalColor;
+                    syncButton.innerHTML = '开始同步';
+                    isSyncing = false;
+                }, 2000);
+            } catch (error) {
+                // 操作失败提示
+                syncButton.style.backgroundColor = '#f44336';
+                syncButton.innerHTML = '同步失败';
+                
+                // 2秒后恢复按钮状态
+                setTimeout(() => {
+                    syncButton.style.backgroundColor = originalColor;
+                    syncButton.innerHTML = '开始同步';
+                    isSyncing = false;
+                }, 2000);
+                
+                console.error('同步失败:', error);
+            }
+        });
+        
         // 点击下载按钮调用downloadAllMarkdowns函数
-        downloadButton.addEventListener('click', () => {
-            downloadAllMarkdowns();
+        downloadButton.addEventListener('click', async () => {
+            // 如果正在下载中，则不执行操作
+            if (isDownloading) return;
+            
+            // 更改按钮状态
+            isDownloading = true;
+            const originalColor = downloadButton.style.backgroundColor;
+            downloadButton.style.backgroundColor = '#999999';
+            downloadButton.innerHTML = '导出中...';
+            
+            try {
+                // 执行下载操作并等待完成
+                await downloadAllMarkdowns();
+                
+                // 操作成功提示
+                downloadButton.style.backgroundColor = '#4CAF50';
+                downloadButton.innerHTML = '导出成功';
+                
+                // 2秒后恢复按钮状态
+                setTimeout(() => {
+                    downloadButton.style.backgroundColor = originalColor;
+                    downloadButton.innerHTML = '全部导出';
+                    isDownloading = false;
+                }, 2000);
+            } catch (error) {
+                // 操作失败提示
+                downloadButton.style.backgroundColor = '#f44336';
+                downloadButton.innerHTML = '导出失败';
+                
+                // 2秒后恢复按钮状态
+                setTimeout(() => {
+                    downloadButton.style.backgroundColor = originalColor;
+                    downloadButton.innerHTML = '全部导出';
+                    isDownloading = false;
+                }, 2000);
+                
+                console.error('导出失败:', error);
+            }
         });
 
         // 创建对话框
@@ -290,6 +358,4 @@
     }
 
     createUIs()
-
-    autoSync()
 })();
